@@ -792,14 +792,16 @@ class FingerprintCollector {
     // Aggregate results
     const fingerprintObject = this.aggregateResults(results);
 
-    // Generate hash
-    const fingerprintString = JSON.stringify(fingerprintObject);
+    // Generate hash from STABLE components only (exclude time-based, random, dynamic values)
+    const stableFingerprint = this.getStableFingerprint(fingerprintObject);
+    const fingerprintString = JSON.stringify(stableFingerprint);
     const fingerprintHash = await cryptoHash(fingerprintString);
 
     const result = {
-      fingerprint: fingerprintObject,
-      fingerprintHash,
-      timestamp: Date.now(),
+      fingerprint: fingerprintObject, // Full fingerprint (includes all data, even dynamic values)
+      fingerprintHash, // Hash of STABLE components only (consistent across page loads)
+      stableFingerprint: stableFingerprint, // Stable components used for hash (for debugging)
+      timestamp: Date.now(), // When fingerprint was generated (not used in hash)
       version: '3.0.0', // P0 fixes + P1 caching & configuration + P2 Strategy Pattern
       cached: false
     };
@@ -810,6 +812,7 @@ class FingerprintCollector {
         await Cache.set(cacheKey, {
           fingerprint: fingerprintObject,
           fingerprintHash,
+          stableFingerprint: stableFingerprint,
           timestamp: result.timestamp,
           version: result.version
         });
@@ -826,6 +829,7 @@ class FingerprintCollector {
         await Cache.set(cacheKey, {
           fingerprint: fingerprintObject,
           fingerprintHash,
+          stableFingerprint: stableFingerprint,
           timestamp: result.timestamp,
           version: result.version
         });
@@ -911,6 +915,123 @@ class FingerprintCollector {
     }
 
     return fingerprint;
+  }
+
+  /**
+   * Get stable fingerprint (excludes time-based, random, dynamic values)
+   * This ensures the hash remains consistent across page loads for the same device/browser
+   * 
+   * Excluded from hash (but included in full fingerprint object):
+   * - Math.random() - changes every call
+   * - Timestamps (Date.now(), performance.now()) - change constantly
+   * - Performance timing - changes on every page load
+   * - History.length - changes with navigation
+   * - Battery level/time - changes over time
+   * - Connection RTT/downlink - varies with network conditions
+   * - Storage quota/usage - changes as data is stored
+   * - Screen orientation angle - changes when device rotates
+   * - Online status - can change with connectivity
+   * 
+   * Included in hash (stable characteristics):
+   * - Hardware: screen size, color depth, pixel ratio, platform, architecture
+   * - Software: user agent, browser, OS, language, timezone offset
+   * - Capabilities: WebGL renderer, canvas fingerprint, audio fingerprint, fonts
+   * - Features: available APIs, codec support, touch support
+   */
+  getStableFingerprint(fingerprintObject) {
+    const stable = { ...fingerprintObject };
+    
+    // Remove time-based values from DateTime
+    if (stable.dateTime) {
+      stable.dateTime = {
+        timezoneOffset: stable.dateTime.timezoneOffset
+        // Exclude: timestamp, dateString, toISOString, precision
+      };
+    }
+    
+    // Remove random value from Math
+    if (stable.math) {
+      const mathStable = { ...stable.math };
+      delete mathStable.random; // Math.random() changes every time
+      stable.math = mathStable;
+    }
+    
+    // Remove performance timing (changes on every page load)
+    if (stable.performance) {
+      // Keep only stable performance characteristics, not timing values
+      stable.performance = null; // Performance timing is not stable
+    }
+    
+    // Remove history.length (can change as user navigates)
+    if (stable.history) {
+      stable.history = {
+        state: stable.history.state
+        // Exclude: length (changes with navigation)
+      };
+    }
+    
+    // Remove battery level (changes over time)
+    if (stable.battery) {
+      const batteryStable = { ...stable.battery };
+      delete batteryStable.level; // Battery level changes
+      delete batteryStable.chargingTime; // Changes
+      delete batteryStable.dischargingTime; // Changes
+      // Keep only: charging (boolean, more stable)
+      stable.battery = {
+        charging: batteryStable.charging
+      };
+    }
+    
+    // Remove connection info that changes (rtt, downlink can vary)
+    if (stable.connection) {
+      const connectionStable = { ...stable.connection };
+      delete connectionStable.rtt; // Round-trip time varies
+      delete connectionStable.downlink; // Can change
+      delete connectionStable.downlinkMax; // Can change
+      // Keep: effectiveType, type, saveData (more stable)
+      stable.connection = {
+        effectiveType: connectionStable.effectiveType,
+        type: connectionStable.type,
+        saveData: connectionStable.saveData
+      };
+    }
+    
+    // Remove storage usage (can change)
+    if (stable.storage) {
+      const storageStable = { ...stable.storage };
+      delete storageStable.quota; // Can change
+      delete storageStable.usage; // Changes as data is stored
+      delete storageStable.usageDetails; // Changes
+      // Keep only: availability flags
+      stable.storage = {
+        localStorage: storageStable.localStorage,
+        sessionStorage: storageStable.sessionStorage,
+        indexedDB: storageStable.indexedDB,
+        webSQL: storageStable.webSQL
+      };
+    }
+    
+    // Remove screen orientation angle (can change)
+    if (stable.orientation) {
+      const orientationStable = { ...stable.orientation };
+      delete orientationStable.angle; // Changes when device rotates
+      // Keep: type (more stable)
+      stable.orientation = {
+        type: orientationStable.type
+      };
+    }
+    
+    // Remove onLine status (can change)
+    if (stable.privacy) {
+      const privacyStable = { ...stable.privacy };
+      delete privacyStable.onLine; // Can change
+      stable.privacy = {
+        cookieEnabled: privacyStable.cookieEnabled,
+        doNotTrack: privacyStable.doNotTrack
+      };
+    }
+    
+    return stable;
   }
 
   /**
@@ -1624,17 +1745,26 @@ class ConnectionStrategy extends FingerprintStrategy {
       if (!connection) return null;
 
       return {
-        effectiveType: connection.effectiveType || null,
-        downlink: connection.downlink || null,
-        downlinkMax: connection.downlinkMax || null,
-        rtt: connection.rtt || null,
-        saveData: connection.saveData || false,
-        type: connection.type || null
+        effectiveType: connection.effectiveType || null, // Relatively stable
+        downlink: connection.downlink || null, // Can vary
+        downlinkMax: connection.downlinkMax || null, // Can vary
+        rtt: connection.rtt || null, // Varies with network conditions
+        saveData: connection.saveData || false, // Stable
+        type: connection.type || null // Relatively stable
       };
     } catch (e) {
       Logger.warn('ConnectionStrategy', 'Connection info failed', { error: e.message });
       return null;
     }
+  }
+  
+  getStableComponents(result) {
+    // Only return stable connection characteristics
+    return result ? {
+      effectiveType: result.effectiveType,
+      type: result.type,
+      saveData: result.saveData
+    } : null;
   }
 }
 
@@ -1734,6 +1864,8 @@ class StorageStrategy extends FingerprintStrategy {
           'StorageStrategy'
         );
         if (estimate) {
+          // NOTE: quota and usage change as data is stored/removed
+          // These are included in full fingerprint but NOT used for identity hash
           result.quota = estimate.quota || null;
           result.usage = estimate.usage || null;
           result.usageDetails = estimate.usageDetails || null;
@@ -1744,6 +1876,16 @@ class StorageStrategy extends FingerprintStrategy {
     }
 
     return result;
+  }
+  
+  getStableComponents(result) {
+    // Only return storage availability flags, exclude quota/usage (change over time)
+    return result ? {
+      localStorage: result.localStorage,
+      sessionStorage: result.sessionStorage,
+      indexedDB: result.indexedDB,
+      webSQL: result.webSQL
+    } : null;
   }
 }
 
@@ -1856,11 +1998,13 @@ class BatteryStrategy extends FingerprintStrategy {
           'BatteryStrategy'
         );
         if (battery) {
+          // NOTE: Battery level and times change constantly
+          // Only charging status is relatively stable for short periods
           return {
-            charging: battery.charging,
-            chargingTime: battery.chargingTime,
-            dischargingTime: battery.dischargingTime,
-            level: battery.level
+            charging: battery.charging, // Relatively stable (changes slowly)
+            chargingTime: battery.chargingTime, // Changes constantly
+            dischargingTime: battery.dischargingTime, // Changes constantly
+            level: battery.level // Changes constantly
           };
         }
       }
@@ -1868,6 +2012,13 @@ class BatteryStrategy extends FingerprintStrategy {
       Logger.warn('BatteryStrategy', 'Battery API access failed', { error: e.message });
     }
     return null;
+  }
+  
+  getStableComponents(result) {
+    // Only return charging status, exclude level and times (change constantly)
+    return result ? {
+      charging: result.charging
+    } : null;
   }
 }
 
@@ -1973,6 +2124,8 @@ class PerformanceStrategy extends FingerprintStrategy {
         return null;
       }
 
+      // NOTE: Performance timing values change on every page load
+      // These are included in full fingerprint for analysis but NOT used for identity hash
       const timing = window.performance.timing;
       return {
         navigationStart: timing.navigationStart,
@@ -1992,6 +2145,11 @@ class PerformanceStrategy extends FingerprintStrategy {
       return null;
     }
   }
+  
+  getStableComponents(result) {
+    // Performance timing is not stable - return null so it's excluded from hash
+    return null;
+  }
 }
 
 /**
@@ -2005,6 +2163,8 @@ class MathStrategy extends FingerprintStrategy {
   }
 
   async execute() {
+    // NOTE: Math.random() is excluded from fingerprint hash (changes every time)
+    // It's included in the full fingerprint object for analysis but not used for identity
     return {
       E: Math.E,
       LN2: Math.LN2,
@@ -2013,8 +2173,8 @@ class MathStrategy extends FingerprintStrategy {
       LOG10E: Math.LOG10E,
       PI: Math.PI,
       SQRT1_2: Math.SQRT1_2,
-      SQRT2: Math.SQRT2,
-      random: Math.random()
+      SQRT2: Math.SQRT2
+      // random: Math.random() - EXCLUDED (not stable for fingerprinting)
     };
   }
 }
@@ -2030,14 +2190,25 @@ class DateTimeStrategy extends FingerprintStrategy {
   }
 
   async execute() {
+    // NOTE: Timestamp values are excluded from fingerprint hash (change every time)
+    // Only timezoneOffset is stable and used for identity
     const now = new Date();
     return {
-      timestamp: now.getTime(),
-      timezoneOffset: now.getTimezoneOffset(),
-      dateString: now.toString(),
-      toISOString: now.toISOString(),
-      precision: performance.now ? performance.now() : null
+      // These are included in full fingerprint but NOT used for hash:
+      timestamp: now.getTime(), // Changes every millisecond
+      dateString: now.toString(), // Changes every second
+      toISOString: now.toISOString(), // Changes every second
+      precision: performance.now ? performance.now() : null, // Changes every microsecond
+      // This is stable and used for identity:
+      timezoneOffset: now.getTimezoneOffset() // Stable (doesn't change unless user changes timezone)
     };
+  }
+  
+  getStableComponents(result) {
+    // Only return timezoneOffset for fingerprint hash
+    return result ? {
+      timezoneOffset: result.timezoneOffset
+    } : null;
   }
 }
 
@@ -2053,10 +2224,18 @@ class PrivacyStrategy extends FingerprintStrategy {
 
   async execute() {
     return {
-      cookieEnabled: navigator.cookieEnabled,
-      doNotTrack: navigator.doNotTrack || null,
-      onLine: navigator.onLine
+      cookieEnabled: navigator.cookieEnabled, // Stable
+      doNotTrack: navigator.doNotTrack || null, // Stable
+      onLine: navigator.onLine // Can change (network connectivity)
     };
+  }
+  
+  getStableComponents(result) {
+    // Only return stable privacy settings, exclude onLine (can change)
+    return result ? {
+      cookieEnabled: result.cookieEnabled,
+      doNotTrack: result.doNotTrack
+    } : null;
   }
 }
 
@@ -2072,14 +2251,23 @@ class HistoryStrategy extends FingerprintStrategy {
 
   async execute() {
     try {
+      // NOTE: history.length changes as user navigates
+      // Only state presence is relatively stable
       return {
-        length: window.history.length,
-        state: window.history.state !== null
+        length: window.history.length, // Changes with navigation
+        state: window.history.state !== null // More stable
       };
     } catch (e) {
       Logger.warn('HistoryStrategy', 'History info failed', { error: e.message });
       return null;
     }
+  }
+  
+  getStableComponents(result) {
+    // Only return state, exclude length (changes with navigation)
+    return result ? {
+      state: result.state
+    } : null;
   }
 }
 
@@ -2236,8 +2424,8 @@ class ScreenOrientationStrategy extends FingerprintStrategy {
     try {
       if (screen.orientation) {
         return {
-          angle: screen.orientation.angle,
-          type: screen.orientation.type,
+          angle: screen.orientation.angle, // Changes when device rotates
+          type: screen.orientation.type, // More stable
           onchange: screen.orientation.onchange !== null
         };
       }
@@ -2245,6 +2433,13 @@ class ScreenOrientationStrategy extends FingerprintStrategy {
       Logger.warn('ScreenOrientationStrategy', 'Screen orientation failed', { error: e.message });
     }
     return null;
+  }
+  
+  getStableComponents(result) {
+    // Only return type, exclude angle (changes with rotation)
+    return result ? {
+      type: result.type
+    } : null;
   }
 }
 
