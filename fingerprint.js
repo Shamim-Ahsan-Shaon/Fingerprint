@@ -2733,23 +2733,35 @@ function getCanvasFingerprint() {
       return null;
     }
 
-    // Basic canvas fingerprint
+    // Use fixed dimensions for consistency
     canvas.width = 200;
     canvas.height = 50;
-    ctx.textBaseline = 'top';
-    ctx.font = "16px 'Arial'";
-    ctx.textBaseline = "alphabetic";
+    
+    // Reset canvas state for consistent rendering
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Basic canvas fingerprint - use stable text (no emoji for better consistency)
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = "16px Arial";
     ctx.fillStyle = "#f60";
     ctx.fillRect(0, 0, 200, 50);
     ctx.fillStyle = "#069";
-    ctx.fillText("Canvas fingerprinting test 🚀", 2, 15);
+    // Removed emoji - can render differently across browsers/OS
+    ctx.fillText("Canvas fingerprinting test", 2, 15);
     ctx.strokeStyle = "rgba(120, 186, 176, 0.8)";
     ctx.beginPath();
     ctx.arc(100, 25, 15, 0, Math.PI * 2);
     ctx.stroke();
-    results.basic = simpleHash(canvas.toDataURL());
+    
+    const basicDataURL = canvas.toDataURL();
+    // Check for anti-fingerprinting (blank or blocked canvas)
+    if (!basicDataURL || basicDataURL.length < 100 || basicDataURL === 'data:,') {
+      Logger.warn('getCanvasFingerprint', 'Canvas fingerprinting blocked or blank (anti-fingerprinting)');
+      return null;
+    }
+    results.basic = simpleHash(basicDataURL);
 
-    // Text metrics fingerprint
+    // Text metrics (stable - doesn't depend on canvas rendering)
     ctx.font = "14px Arial";
     const metrics = ctx.measureText("Canvas fingerprint");
     results.textMetrics = {
@@ -2760,19 +2772,33 @@ function getCanvasFingerprint() {
       actualBoundingBoxDescent: metrics.actualBoundingBoxDescent || 0
     };
 
-    // Gradient fingerprint
+    // Gradient fingerprint - use fresh canvas state
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     const gradient = ctx.createLinearGradient(0, 0, 200, 50);
     gradient.addColorStop(0, 'rgba(255, 0, 0, 0.5)');
     gradient.addColorStop(1, 'rgba(0, 0, 255, 0.5)');
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 200, 50);
-    results.gradient = simpleHash(canvas.toDataURL());
+    const gradientDataURL = canvas.toDataURL();
+    if (gradientDataURL && gradientDataURL.length >= 100 && gradientDataURL !== 'data:,') {
+      results.gradient = simpleHash(gradientDataURL);
+    }
 
-    // Shadow fingerprint
+    // Shadow fingerprint - use fresh canvas state
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.shadowBlur = 10;
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillStyle = "#000";
     ctx.fillText("Shadow test", 10, 10);
-    results.shadow = simpleHash(canvas.toDataURL());
+    const shadowDataURL = canvas.toDataURL();
+    if (shadowDataURL && shadowDataURL.length >= 100 && shadowDataURL !== 'data:,') {
+      results.shadow = simpleHash(shadowDataURL);
+    }
+
+    // If basic hash is missing, return null (anti-fingerprinting active)
+    if (!results.basic) {
+      return null;
+    }
 
     return results;
   } catch (e) {
