@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/eruda"></script>
+<script>
+  eruda.init();
+</script>
+  <meta charset="UTF-8" />
+  <title>Device Fingerprint Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 800px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    label {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-weight: 600;
+    }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.5rem;
+      box-sizing: border-box;
+    }
+    textarea {
+      width: 100%;
+      height: 250px;
+      margin-top: 1rem;
+      font-family: monospace;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+      padding: 0.5rem;
+    }
+    #status {
+      margin-top: 0.75rem;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h1>Device Fingerprint</h1>
+
+  <label for="fingerprintHash">Fingerprint hash</label>
+  <input id="fingerprintHash" type="text" readonly />
+
+  <button id="regenerateBtn" type="button">Generate / Refresh Fingerprint</button>
+
+  <label for="fingerprintJson" style="margin-top:1rem;">Fingerprint details (JSON)</label>
+  <textarea id="fingerprintJson" readonly></textarea>
+
+  <div id="status">Waiting to generate fingerprint…</div>
+
+  <!-- 1) Your fingerprint.js file in the SAME folder as index.html -->
+  <script src="./fingerprint.js"></script>
+
+  <!-- 2) Page logic that uses getFingerprint() from fingerprint.js -->
+  <script>
+    async function updateFingerprint() {
+      const statusEl = document.getElementById('status');
+      const hashInput = document.getElementById('fingerprintHash');
+      const jsonTextarea = document.getElementById('fingerprintJson');
+
+      statusEl.textContent = 'Generating fingerprint...';
+
+      try {
+        // Using the latest version we built: returns { fingerprint, fingerprintHash }
+        const { fingerprint, fingerprintHash } = await getFingerprint();
+
+        hashInput.value = fingerprintHash || '';
+        jsonTextarea.value = JSON.stringify(fingerprint, null, 2);
+        statusEl.textContent = 'Fingerprint generated successfully.';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = 'Error generating fingerprint. See console for details.';
+      }
+    }
+
+    document.getElementById('regenerateBtn').addEventListener('click', updateFingerprint);
+
+    // Auto-generate on page load
+    document.addEventListener('DOMContentLoaded', updateFingerprint);
+  </script>
+</body>
+</html>
