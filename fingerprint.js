@@ -1,4 +1,3 @@
-
 /**
  * Production-Grade Browser Fingerprinting Library
  * Comprehensive device identification with 50+ detection methods
@@ -1482,10 +1481,15 @@ class AudioStrategy extends FingerprintStrategy {
     let context = null;
     
     try {
-      const AudioContext = window.AudioContext || window.webkitAudioContext || window.OfflineAudioContext || window.webkitOfflineAudioContext;
-      if (!AudioContext) return null;
+      // Use OfflineAudioContext (required for startRendering(), no audio output)
+      const OfflineAudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+      if (!OfflineAudioContext) {
+        Logger.debug('AudioStrategy', 'OfflineAudioContext not available');
+        return null;
+      }
 
-      context = new AudioContext(1, 44100, 44100);
+      // OfflineAudioContext constructor: (numberOfChannels, length, sampleRate)
+      context = new OfflineAudioContext(1, 44100, 44100);
       
       const audioPromise = (async () => {
         const osc = context.createOscillator();
@@ -1509,6 +1513,7 @@ class AudioStrategy extends FingerprintStrategy {
         osc.start(0);
         osc.stop(0.001);
 
+        // startRendering() is only available on OfflineAudioContext
         const buffer = await context.startRendering();
         const data = buffer.getChannelData(0);
         
@@ -1771,16 +1776,28 @@ class PermissionsStrategy extends FingerprintStrategy {
     const result = {};
     for (const permission of permissions) {
       try {
+        // Special handling for push permission (requires userVisibleOnly)
+        let queryParams = { name: permission };
+        if (permission === 'push') {
+          queryParams = { name: permission, userVisibleOnly: true };
+        }
+        
         const status = await withTimeout(
-          navigator.permissions.query({ name: permission }),
+          navigator.permissions.query(queryParams),
           'permissions',
           null,
           `PermissionsStrategy:${permission}`
         );
         result[permission] = status ? status.state : 'timeout';
       } catch (e) {
-        Logger.warn('PermissionsStrategy', `Permission query failed for ${permission}`, { error: e.message });
-        result[permission] = 'unsupported';
+        // Handle specific error for push permission
+        if (permission === 'push' && e.name === 'NotSupportedError') {
+          Logger.debug('PermissionsStrategy', `Push permission not supported (requires userVisibleOnly)`, { error: e.message });
+          result[permission] = 'not-supported';
+        } else {
+          Logger.warn('PermissionsStrategy', `Permission query failed for ${permission}`, { error: e.message });
+          result[permission] = 'unsupported';
+        }
       }
     }
 
