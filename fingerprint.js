@@ -794,13 +794,16 @@ class FingerprintCollector {
 
     // Generate hash from STABLE components only (exclude time-based, random, dynamic values)
     const stableFingerprint = this.getStableFingerprint(fingerprintObject);
-    const fingerprintString = JSON.stringify(stableFingerprint);
+    
+    // Sort keys to ensure consistent JSON.stringify order (important for hash consistency)
+    const sortedStableFingerprint = this.sortObjectKeys(stableFingerprint);
+    const fingerprintString = JSON.stringify(sortedStableFingerprint);
     const fingerprintHash = await cryptoHash(fingerprintString);
 
     const result = {
       fingerprint: fingerprintObject, // Full fingerprint (includes all data, even dynamic values)
       fingerprintHash, // Hash of STABLE components only (consistent across page loads)
-      stableFingerprint: stableFingerprint, // Stable components used for hash (for debugging)
+      stableFingerprint: sortedStableFingerprint, // Stable components used for hash (sorted, for debugging)
       timestamp: Date.now(), // When fingerprint was generated (not used in hash)
       version: '3.0.0', // P0 fixes + P1 caching & configuration + P2 Strategy Pattern
       cached: false
@@ -812,7 +815,7 @@ class FingerprintCollector {
         await Cache.set(cacheKey, {
           fingerprint: fingerprintObject,
           fingerprintHash,
-          stableFingerprint: stableFingerprint,
+          stableFingerprint: sortedStableFingerprint,
           timestamp: result.timestamp,
           version: result.version
         });
@@ -829,7 +832,7 @@ class FingerprintCollector {
         await Cache.set(cacheKey, {
           fingerprint: fingerprintObject,
           fingerprintHash,
-          stableFingerprint: stableFingerprint,
+          stableFingerprint: sortedStableFingerprint,
           timestamp: result.timestamp,
           version: result.version
         });
@@ -957,9 +960,13 @@ class FingerprintCollector {
     }
     
     // Remove performance timing (changes on every page load)
+    // ALL performance timing values are excluded: navigationStart, domInteractive, 
+    // domComplete, loadEventEnd, connectEnd, connectStart, domainLookupEnd, 
+    // domainLookupStart, fetchStart, responseEnd, responseStart
+    // These ALL change on every page load and must be completely excluded
     if (stable.performance) {
-      // Keep only stable performance characteristics, not timing values
-      stable.performance = null; // Performance timing is not stable
+      // Completely exclude performance timing - it's not stable for fingerprinting
+      delete stable.performance; // Remove entirely from hash calculation
     }
     
     // Remove history.length (can change as user navigates)
@@ -1031,7 +1038,53 @@ class FingerprintCollector {
       };
     }
     
+    // Remove WebRTC candidatesCount (can vary between page loads)
+    if (stable.webRTC) {
+      const webRTCStable = { ...stable.webRTC };
+      delete webRTCStable.candidatesCount; // Can vary
+      delete webRTCStable.connectionState; // Can vary
+      delete webRTCStable.error; // Can vary
+      delete webRTCStable.timeout; // Can vary
+      // Keep only: hasWebRTC (boolean, stable)
+      stable.webRTC = {
+        hasWebRTC: webRTCStable.hasWebRTC
+      };
+    }
+    
+    // Remove any undefined/null values to ensure consistent JSON.stringify
+    // This prevents issues where undefined values might be serialized differently
+    Object.keys(stable).forEach(key => {
+      if (stable[key] === undefined || stable[key] === null) {
+        delete stable[key];
+      }
+    });
+    
     return stable;
+  }
+
+  /**
+   * Sort object keys recursively to ensure consistent JSON.stringify output
+   * This is critical for hash consistency - same data must always produce same JSON string
+   */
+  sortObjectKeys(obj) {
+    if (obj === null || obj === undefined) {
+      return obj;
+    }
+    
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.sortObjectKeys(item));
+    }
+    
+    if (typeof obj !== 'object') {
+      return obj;
+    }
+    
+    const sorted = {};
+    Object.keys(obj).sort().forEach(key => {
+      sorted[key] = this.sortObjectKeys(obj[key]);
+    });
+    
+    return sorted;
   }
 
   /**
