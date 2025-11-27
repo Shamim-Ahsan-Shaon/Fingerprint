@@ -27,12 +27,13 @@
     }
     textarea {
       width: 100%;
-      height: 250px;
+      height: 500px;
       margin-top: 1rem;
       font-family: monospace;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       box-sizing: border-box;
       padding: 0.5rem;
+      resize: vertical;
     }
     #status {
       margin-top: 0.75rem;
@@ -72,12 +73,12 @@
       statusEl.textContent = 'Generating fingerprint...';
 
       try {
-        // Using the latest version we built: returns { fingerprint, fingerprintHash }
-        const { fingerprint, fingerprintHash } = await getFingerprint();
+        // Using the latest version we built: returns { fingerprint, fingerprintHash, timestamp, version }
+        const result = await getFingerprint();
 
-        hashInput.value = fingerprintHash || '';
-        jsonTextarea.value = JSON.stringify(fingerprint, null, 2);
-        statusEl.textContent = 'Fingerprint generated successfully.';
+        hashInput.value = result.fingerprintHash || '';
+        jsonTextarea.value = JSON.stringify(result.fingerprint, null, 2);
+        statusEl.textContent = `Fingerprint generated successfully. Version: ${result.version || 'N/A'}, Timestamp: ${new Date(result.timestamp || Date.now()).toLocaleString()}`;
       } catch (err) {
         console.error(err);
         statusEl.textContent = 'Error generating fingerprint. See console for details.';
