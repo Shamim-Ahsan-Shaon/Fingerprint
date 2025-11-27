@@ -2745,7 +2745,10 @@ function getCanvasFingerprint() {
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = 'source-over';
     ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'low'; // Use 'low' for consistency across browsers
+    // imageSmoothingQuality may not be supported in all browsers
+    if (ctx.imageSmoothingQuality !== undefined) {
+      ctx.imageSmoothingQuality = 'low'; // Use 'low' for consistency across browsers
+    }
     ctx.lineWidth = 1;
     ctx.lineCap = 'butt';
     ctx.lineJoin = 'miter';
@@ -2758,14 +2761,16 @@ function getCanvasFingerprint() {
     // Basic canvas fingerprint - use stable text (no emoji for better consistency)
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'start';
-    ctx.font = "16px Arial";
+    // Use generic sans-serif font stack for better cross-platform consistency
+    // Arial may not be available on all systems, so we provide fallbacks
+    ctx.font = "16px Arial, sans-serif";
     ctx.fillStyle = "#f60";
     ctx.fillRect(0, 0, 200, 50);
     ctx.fillStyle = "#069";
     // Removed emoji - can render differently across browsers/OS
     ctx.fillText("Canvas fingerprinting test", 2, 15);
     ctx.strokeStyle = "rgba(120, 186, 176, 0.8)";
-    ctx.lineWidth = 1;
+    // lineWidth already set above, but ensure it's correct for stroke
     ctx.beginPath();
     ctx.arc(100, 25, 15, 0, Math.PI * 2);
     ctx.stroke();
@@ -2781,7 +2786,8 @@ function getCanvasFingerprint() {
 
     // Text metrics (stable - doesn't depend on canvas rendering)
     // Reset font before measuring to ensure consistency
-    ctx.font = "14px Arial";
+    // Use same font stack as basic fingerprint for consistency
+    ctx.font = "14px Arial, sans-serif";
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'start';
     const metrics = ctx.measureText("Canvas fingerprint");
@@ -2795,9 +2801,17 @@ function getCanvasFingerprint() {
 
     // Gradient fingerprint - use fresh canvas state
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Reset all context properties again
+    // Reset all context properties again (same as basic operation)
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.imageSmoothingEnabled = true;
+    if (ctx.imageSmoothingQuality !== undefined) {
+      ctx.imageSmoothingQuality = 'low';
+    }
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+    ctx.miterLimit = 10;
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'rgba(0, 0, 0, 0)';
     ctx.shadowOffsetX = 0;
@@ -2814,12 +2828,21 @@ function getCanvasFingerprint() {
 
     // Shadow fingerprint - use fresh canvas state
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    // Reset all context properties again
+    // Reset all context properties again (same as basic operation)
     ctx.globalAlpha = 1.0;
     ctx.globalCompositeOperation = 'source-over';
+    ctx.imageSmoothingEnabled = true;
+    if (ctx.imageSmoothingQuality !== undefined) {
+      ctx.imageSmoothingQuality = 'low';
+    }
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'butt';
+    ctx.lineJoin = 'miter';
+    ctx.miterLimit = 10;
     ctx.textBaseline = 'alphabetic';
     ctx.textAlign = 'start';
-    ctx.font = "16px Arial";
+    // Use same font stack as basic fingerprint for consistency
+    ctx.font = "16px Arial, sans-serif";
     ctx.shadowBlur = 10;
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowOffsetX = 0;
