@@ -1239,18 +1239,23 @@ class CanvasStrategy extends FingerprintStrategy {
       
       // Basic canvas fingerprint - use stable text (no emoji for better consistency)
       ctx.textBaseline = 'alphabetic';
-      ctx.font = "16px Arial";
+      ctx.textAlign = 'start';
+      // Use generic sans-serif font stack for better cross-platform consistency
+      ctx.font = "16px Arial, sans-serif";
       ctx.fillStyle = "#f60";
-      ctx.fillRect(0, 0, 200, 50);
+      // Use canvas dimensions instead of hardcoded values for consistency
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#069";
       // Removed emoji - can render differently across browsers/OS
       ctx.fillText("Canvas fingerprinting test", 2, 15);
       ctx.strokeStyle = "rgba(120, 186, 176, 0.8)";
       ctx.beginPath();
-      ctx.arc(100, 25, 15, 0, Math.PI * 2);
+      // Use canvas center coordinates instead of hardcoded values
+      ctx.arc(canvas.width / 2, canvas.height / 2, 15, 0, Math.PI * 2);
       ctx.stroke();
       
-      const basicDataURL = canvas.toDataURL();
+      // Explicitly specify PNG format for consistency
+      const basicDataURL = canvas.toDataURL('image/png');
       // Check for anti-fingerprinting (blank or blocked canvas)
       if (!basicDataURL || basicDataURL.length < 100 || basicDataURL === 'data:,') {
         Logger.warn('CanvasStrategy', 'Canvas fingerprinting blocked or blank (anti-fingerprinting)');
@@ -1259,7 +1264,10 @@ class CanvasStrategy extends FingerprintStrategy {
       results.basic = simpleHash(basicDataURL);
 
       // Text metrics (stable - doesn't depend on canvas rendering)
-      ctx.font = "14px Arial";
+      // Use same font stack as basic fingerprint for consistency
+      ctx.font = "14px Arial, sans-serif";
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'start';
       const metrics = ctx.measureText("Canvas fingerprint");
       results.textMetrics = {
         width: metrics.width,
@@ -1271,12 +1279,13 @@ class CanvasStrategy extends FingerprintStrategy {
 
       // Gradient fingerprint - use fresh canvas state
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const gradient = ctx.createLinearGradient(0, 0, 200, 50);
+      // Use canvas dimensions instead of hardcoded values for consistency
+      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
       gradient.addColorStop(0, 'rgba(255, 0, 0, 0.5)');
       gradient.addColorStop(1, 'rgba(0, 0, 255, 0.5)');
       ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, 200, 50);
-      const gradientDataURL = canvas.toDataURL();
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const gradientDataURL = canvas.toDataURL('image/png');
       if (gradientDataURL && gradientDataURL.length >= 100 && gradientDataURL !== 'data:,') {
         results.gradient = simpleHash(gradientDataURL);
       }
@@ -2765,14 +2774,16 @@ function getCanvasFingerprint() {
     // Arial may not be available on all systems, so we provide fallbacks
     ctx.font = "16px Arial, sans-serif";
     ctx.fillStyle = "#f60";
-    ctx.fillRect(0, 0, 200, 50);
+    // Use canvas dimensions instead of hardcoded values for consistency
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = "#069";
     // Removed emoji - can render differently across browsers/OS
     ctx.fillText("Canvas fingerprinting test", 2, 15);
     ctx.strokeStyle = "rgba(120, 186, 176, 0.8)";
     // lineWidth already set above, but ensure it's correct for stroke
     ctx.beginPath();
-    ctx.arc(100, 25, 15, 0, Math.PI * 2);
+    // Use canvas center coordinates instead of hardcoded values
+    ctx.arc(canvas.width / 2, canvas.height / 2, 15, 0, Math.PI * 2);
     ctx.stroke();
     
     // Explicitly specify PNG format for consistency (default but explicit is better)
@@ -2816,11 +2827,12 @@ function getCanvasFingerprint() {
     ctx.shadowColor = 'rgba(0, 0, 0, 0)';
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
-    const gradient = ctx.createLinearGradient(0, 0, 200, 50);
+    // Use canvas dimensions instead of hardcoded values for consistency
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     gradient.addColorStop(0, 'rgba(255, 0, 0, 0.5)');
     gradient.addColorStop(1, 'rgba(0, 0, 255, 0.5)');
     ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, 200, 50);
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     const gradientDataURL = canvas.toDataURL('image/png');
     if (gradientDataURL && gradientDataURL.length >= 100 && gradientDataURL !== 'data:,') {
       results.gradient = simpleHash(gradientDataURL);
