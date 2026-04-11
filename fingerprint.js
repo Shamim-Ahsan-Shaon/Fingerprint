@@ -1213,7 +1213,12 @@ class CanvasStrategy extends FingerprintStrategy {
   async execute() {
     const results = {};
     let canvas = null;
-    
+
+    // Anti-fingerprinting check: blank or blocked canvases return either
+    // an empty `data:,` URL or an obviously truncated payload. Any real
+    // 200x50 PNG is well over 100 bytes.
+    const isValidDataURL = (url) => !!url && url.length >= 100 && url !== 'data:,';
+
     try {
       canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -1225,10 +1230,10 @@ class CanvasStrategy extends FingerprintStrategy {
       // Use fixed dimensions for consistency
       canvas.width = 200;
       canvas.height = 50;
-      
+
       // Reset canvas state for consistent rendering
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       // Basic canvas fingerprint - use stable text (no emoji for better consistency)
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'start';
@@ -1245,11 +1250,10 @@ class CanvasStrategy extends FingerprintStrategy {
       // Use canvas center coordinates instead of hardcoded values
       ctx.arc(canvas.width / 2, canvas.height / 2, 15, 0, Math.PI * 2);
       ctx.stroke();
-      
+
       // Explicitly specify PNG format for consistency
       const basicDataURL = canvas.toDataURL('image/png');
-      // Check for anti-fingerprinting (blank or blocked canvas)
-      if (!basicDataURL || basicDataURL.length < 100 || basicDataURL === 'data:,') {
+      if (!isValidDataURL(basicDataURL)) {
         Logger.warn('CanvasStrategy', 'Canvas fingerprinting blocked or blank (anti-fingerprinting)');
         return null;
       }
@@ -1278,7 +1282,7 @@ class CanvasStrategy extends FingerprintStrategy {
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       const gradientDataURL = canvas.toDataURL('image/png');
-      if (gradientDataURL && gradientDataURL.length >= 100 && gradientDataURL !== 'data:,') {
+      if (isValidDataURL(gradientDataURL)) {
         results.gradient = simpleHash(gradientDataURL);
       }
 
@@ -1288,8 +1292,11 @@ class CanvasStrategy extends FingerprintStrategy {
       ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
       ctx.fillStyle = "#000";
       ctx.fillText("Shadow test", 10, 10);
+      // NOTE: intentionally matches the previous call (no explicit format
+      // argument) so the shadow data URL - and therefore the hash - stays
+      // byte-identical to pre-refactor runs. The default is image/png.
       const shadowDataURL = canvas.toDataURL();
-      if (shadowDataURL && shadowDataURL.length >= 100 && shadowDataURL !== 'data:,') {
+      if (isValidDataURL(shadowDataURL)) {
         results.shadow = simpleHash(shadowDataURL);
       }
 
