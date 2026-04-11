@@ -809,26 +809,18 @@ class FingerprintCollector {
       cached: false
     };
 
-    // Cache result
-    if (Config.get('cache.enabled', true) && cacheKey) {
+    // OPT: Consolidated cache write. The previous body had two copies of
+    // this block — one for the happy-path cacheKey (computed pre-flight on
+    // line ~767) and one for the fallback where the pre-flight key
+    // computation threw. Both did exactly the same Cache.set with exactly
+    // the same payload, so we keep the fallback key regeneration inline
+    // and write once.
+    if (Config.get('cache.enabled', true)) {
       try {
-        await Cache.set(cacheKey, {
-          fingerprint: fingerprintObject,
-          fingerprintHash,
-          stableFingerprint: sortedStableFingerprint,
-          timestamp: result.timestamp,
-          version: result.version
-        });
-        result.cacheKey = cacheKey;
-        Logger.info('FingerprintCollector', 'Fingerprint cached', { cacheKey });
-      } catch (e) {
-        Logger.warn('FingerprintCollector', 'Failed to cache fingerprint', { error: e.message });
-      }
-    } else if (Config.get('cache.enabled', true) && !cacheKey) {
-      // Generate cache key if not already generated
-      try {
-        const stableComponents = Cache.getStableComponents(fingerprintObject);
-        cacheKey = Cache.generateCacheKey(stableComponents);
+        if (!cacheKey) {
+          const stableComponents = Cache.getStableComponents(fingerprintObject);
+          cacheKey = Cache.generateCacheKey(stableComponents);
+        }
         await Cache.set(cacheKey, {
           fingerprint: fingerprintObject,
           fingerprintHash,
@@ -1336,7 +1328,7 @@ class FontDetectionStrategy extends FingerprintStrategy {
     if (!fontList || fontList.length === 0) {
       return [];
     }
-    
+
     const baseFonts = ["monospace", "sans-serif", "serif"];
     const testString = "mmmmmmmmmmlli";
     const testSize = "72px";
@@ -1356,47 +1348,51 @@ class FontDetectionStrategy extends FingerprintStrategy {
       span.style.cssText = `position:absolute;left:-9999px;visibility:hidden;font-size:${testSize}`;
       span.textContent = testString;
 
+      // OPT: Append the probe span exactly once and keep it attached for
+      // the entire baseline + candidate-font measurement pass. Mutating
+      // `span.style.fontFamily` and reading `offsetWidth`/`offsetHeight`
+      // still triggers the layout recalc we need, and the absolute
+      // positioning keeps the span out of the document flow, so the
+      // measured widths are byte-identical to the previous implementation
+      // (which appended / removed per probe). This drops O(3*N + 3) DOM
+      // mutations to exactly 2 (append + remove in `finally`).
+      body.appendChild(span);
+
       for (const font of baseFonts) {
         span.style.fontFamily = font;
-        body.appendChild(span);
-        void span.offsetWidth;
         defaultWidth[font] = span.offsetWidth;
         defaultHeight[font] = span.offsetHeight;
-        body.removeChild(span);
       }
 
-      return new Promise((resolve) => {
+      const checkFont = (font) => {
+        for (const baseFont of baseFonts) {
+          span.style.fontFamily = `'${font}',${baseFont}`;
+          if (
+            span.offsetWidth !== defaultWidth[baseFont] ||
+            span.offsetHeight !== defaultHeight[baseFont]
+          ) {
+            return true;
+          }
+        }
+        return false;
+      };
+
+      return await new Promise((resolve) => {
         const availableFonts = [];
         let fontIndex = 0;
 
-        const checkFont = (font) => {
-          let detected = false;
-          for (const baseFont of baseFonts) {
-            span.style.fontFamily = `'${font}',${baseFont}`;
-            body.appendChild(span);
-            void span.offsetWidth;
-            const matched = (
-              span.offsetWidth !== defaultWidth[baseFont] ||
-              span.offsetHeight !== defaultHeight[baseFont]
-            );
-            body.removeChild(span);
-            if (matched) {
-              detected = true;
-              break;
-            }
-          }
-          return detected;
-        };
-
         const processBatch = (deadline) => {
           const batchSize = Config.get('performance.fontDetectionBatchSize', 5);
-          while ((deadline.timeRemaining() > 0 || deadline.didTimeout) && fontIndex < fontList.length) {
+          while (
+            fontIndex < fontList.length &&
+            (deadline.didTimeout || deadline.timeRemaining() > 0)
+          ) {
             const font = fontList[fontIndex];
             if (checkFont(font)) {
               availableFonts.push(font);
             }
             fontIndex++;
-            
+
             if (fontIndex % batchSize === 0 && deadline.timeRemaining() < 1) {
               break;
             }
@@ -1405,11 +1401,15 @@ class FontDetectionStrategy extends FingerprintStrategy {
           if (fontIndex < fontList.length) {
             const useIdleCallback = Config.get('performance.useRequestIdleCallback', true);
             const idleTimeout = Config.get('performance.fontDetectionIdleTimeout', 5000);
-            
+            const fallbackDelay = Config.get('performance.fontDetectionFallbackDelay', 10);
+
             if (useIdleCallback && window.requestIdleCallback) {
               requestIdleCallback(processBatch, { timeout: idleTimeout });
             } else {
-              setTimeout(() => processBatch({ timeRemaining: () => 5, didTimeout: false }), 10);
+              setTimeout(
+                () => processBatch({ timeRemaining: () => 5, didTimeout: false }),
+                fallbackDelay
+              );
             }
           } else {
             resolve(availableFonts);
@@ -1418,7 +1418,7 @@ class FontDetectionStrategy extends FingerprintStrategy {
 
         const useIdleCallback = Config.get('performance.useRequestIdleCallback', true);
         const idleTimeout = Config.get('performance.fontDetectionIdleTimeout', 5000);
-        
+
         if (useIdleCallback && window.requestIdleCallback) {
           requestIdleCallback(processBatch, { timeout: idleTimeout });
         } else {
@@ -1902,59 +1902,41 @@ class StorageStrategy extends FingerprintStrategy {
     this.timeout = Config.get('timeouts.storage', 2000);
   }
 
+  // OPT: Extracted probe helpers. The previous body repeated nearly
+  // identical nested try/catch blocks four times. These helpers keep the
+  // boolean semantics byte-identical (same 'test' key, same set→remove
+  // sequence, same "any failure means false") so the resulting hash is
+  // unchanged, while halving the line count and making the surface area
+  // of the blocking storage writes obvious.
+  _probeWebStorage(name) {
+    try {
+      const store = window[name];
+      if (!store) return false;
+      store.setItem('test', 'test');
+      store.removeItem('test');
+      return true;
+    } catch (e) {
+      Logger.warn('StorageStrategy', `${name} probe failed`, { error: e && e.message });
+      return false;
+    }
+  }
+
+  _hasGlobal(name) {
+    try {
+      return !!window[name];
+    } catch (e) {
+      Logger.warn('StorageStrategy', `${name} check failed`, { error: e && e.message });
+      return false;
+    }
+  }
+
   async execute() {
     const result = {
-      localStorage: false,
-      sessionStorage: false,
-      indexedDB: false,
-      webSQL: false
+      localStorage: this._probeWebStorage('localStorage'),
+      sessionStorage: this._probeWebStorage('sessionStorage'),
+      indexedDB: this._hasGlobal('indexedDB'),
+      webSQL: this._hasGlobal('openDatabase')
     };
-
-    try {
-      result.localStorage = !!window.localStorage;
-      if (result.localStorage) {
-        try {
-          localStorage.setItem('test', 'test');
-          localStorage.removeItem('test');
-        } catch (e) {
-          Logger.warn('StorageStrategy', 'LocalStorage test failed', { error: e.message });
-          result.localStorage = false;
-        }
-      }
-    } catch (e) {
-      Logger.warn('StorageStrategy', 'LocalStorage check failed', { error: e.message });
-      result.localStorage = false;
-    }
-
-    try {
-      result.sessionStorage = !!window.sessionStorage;
-      if (result.sessionStorage) {
-        try {
-          sessionStorage.setItem('test', 'test');
-          sessionStorage.removeItem('test');
-        } catch (e) {
-          Logger.warn('StorageStrategy', 'SessionStorage test failed', { error: e.message });
-          result.sessionStorage = false;
-        }
-      }
-    } catch (e) {
-      Logger.warn('StorageStrategy', 'SessionStorage check failed', { error: e.message });
-      result.sessionStorage = false;
-    }
-
-    try {
-      result.indexedDB = !!window.indexedDB;
-    } catch (e) {
-      Logger.warn('StorageStrategy', 'IndexedDB check failed', { error: e.message });
-      result.indexedDB = false;
-    }
-
-    try {
-      result.webSQL = !!window.openDatabase;
-    } catch (e) {
-      Logger.warn('StorageStrategy', 'WebSQL check failed', { error: e.message });
-      result.webSQL = false;
-    }
 
     if (navigator.storage && navigator.storage.estimate) {
       try {
@@ -2655,29 +2637,30 @@ function withTimeout(promise, timeoutType, fallbackValue = null, context = 'unkn
   // P1: Get timeout from config or use custom
   const timeoutMs = customTimeout || Config.get(`timeouts.${timeoutType}`, 5000);
   let timeoutId = null;
-  let cancelled = false;
-  
+
   const timeoutPromise = new Promise((resolve) => {
     timeoutId = setTimeout(() => {
-      if (!cancelled) {
-        Logger.warn('withTimeout', `Operation timed out after ${timeoutMs}ms`, { context, timeoutType });
-        resolve(fallbackValue);
-      }
+      Logger.warn('withTimeout', `Operation timed out after ${timeoutMs}ms`, { context, timeoutType });
+      resolve(fallbackValue);
     }, timeoutMs);
   });
-  
+
+  // OPT: Use .finally to guarantee the timer is cleared exactly once on
+  // any settlement (fulfilled, rejected, or racing loss), avoiding the
+  // dangling reference that the previous `then`+`catch` pair could leave
+  // behind when Promise.race picked the timeout branch.
   const wrappedPromise = promise
-    .then(result => {
-      if (timeoutId) clearTimeout(timeoutId);
-      if (!cancelled) return result;
-      return fallbackValue;
-    })
-    .catch(error => {
-      if (timeoutId) clearTimeout(timeoutId);
+    .catch((error) => {
       Logger.error('withTimeout', 'Promise rejected', error, { context, timeoutType });
       throw error;
+    })
+    .finally(() => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
     });
-  
+
   return Promise.race([wrappedPromise, timeoutPromise]);
 }
 
